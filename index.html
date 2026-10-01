@@ -96,6 +96,24 @@ select{border:1px solid currentColor;border-radius:8px;background:transparent;pa
 .msg.err .t{color:var(--rec)}
 
 @media (prefers-reduced-motion:reduce){.half{transition:none}.mic.live::after{animation:none}}
+
+/* settings sheet */
+.sheet{position:fixed;inset:0;z-index:20;background:rgba(6,16,24,.5);display:flex;align-items:flex-end;justify-content:center}
+.sheet .card{width:min(520px,100%);max-height:88%;overflow-y:auto;background:var(--me);color:var(--fg);border-radius:18px 18px 0 0;
+  padding:18px 16px calc(18px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:14px}
+.sheet h2{font:700 18px/1.2 var(--display);margin:0;display:flex;align-items:center}
+.sheet h2 button{margin-left:auto}
+.field{display:flex;flex-direction:column;gap:6px}
+.field>span{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.field .hint{font-size:12.5px;color:var(--muted)}
+.seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.seg button{flex:1;border:0;background:transparent;padding:9px 6px;font-size:14px}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);font-weight:600}
+.vrow{display:flex;gap:8px;align-items:center}
+.vrow select{flex:1;min-width:0;border-color:var(--line)}
+.vrow button,.sheet .done{border:1px solid var(--line);background:transparent;border-radius:999px;padding:7px 14px;font-weight:600}
+.sheet .done{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+input[type=range]{width:100%;accent-color:var(--accent)}
 @media (max-width:480px){.miclabel{display:none}.mic{width:56px;height:56px}}
 </style>
 </head>
@@ -110,6 +128,38 @@ select{border:1px solid currentColor;border-radius:8px;background:transparent;pa
   <button class="chip" id="saveBtn" title="Download the conversation as a text file">Save</button>
   <button class="chip" id="clearBtn">Clear</button>
   <button class="chip" id="installBtn" hidden>Install app</button>
+  <button class="chip" id="setBtn" title="Listening and voice settings">Settings</button>
+</div>
+
+<div class="sheet" id="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+  <div class="card">
+    <h2 id="sheetTitle">Settings <button class="done" id="sheetDone" type="button">Done</button></h2>
+
+    <div class="field">
+      <span>Wait before translating</span>
+      <div class="seg" id="pauseSeg">
+        <button type="button" data-ms="900">Short</button>
+        <button type="button" data-ms="1500">Normal</button>
+        <button type="button" data-ms="2500">Long</button>
+      </div>
+      <div class="hint">How long a pause ends your sentence. Choose Long if it cuts you off mid-sentence.</div>
+    </div>
+
+    <div class="field">
+      <span id="vMeLbl">Voice</span>
+      <div class="vrow"><select id="vMe" aria-labelledby="vMeLbl"></select><button type="button" id="tMe">Test</button></div>
+    </div>
+    <div class="field">
+      <span id="vThemLbl">Voice</span>
+      <div class="vrow"><select id="vThem" aria-labelledby="vThemLbl"></select><button type="button" id="tThem">Test</button></div>
+      <div class="hint" id="vHint">Only the voices installed on this phone are listed.</div>
+    </div>
+
+    <div class="field">
+      <span>Speaking speed <b id="rateVal"></b></span>
+      <input type="range" id="rate" min="0.7" max="1.3" step="0.05">
+    </div>
+  </div>
 </div>
 <div class="banner" id="noVoice" hidden>Voice input needs Google Chrome or Microsoft Edge. Typing still works here.</div>
 
@@ -259,6 +309,7 @@ let rec = null;          // the recognizer currently running
 let active = null;       // "me" | "them" | null — whose mic is switched on
 let netErrors = 0;
 let turns = store.get("turns", false);
+let pauseMs = store.get("pause", 1500);   // silence that ends a sentence
 
 setToggle($("turnsBtn"), turns);
 $("turnsBtn").onclick = () => { turns = !turns; store.set("turns", turns); setToggle($("turnsBtn"), turns); };
@@ -297,21 +348,38 @@ function toggleListen(key){
   listen(key);
 }
 
+// Joins recognition results into one sentence. Some Android versions repeat the
+// growing sentence in each result ("hello", "hello how", "hello how are"), so a
+// result that extends the previous one replaces it instead of being added.
+function joinResults(results){
+  const parts = [];
+  for (let i = 0; i < results.length; i++) {
+    const t = (results[i][0]?.transcript || "").trim();
+    if (!t) continue;
+    const prev = parts[parts.length - 1];
+    if (prev && t.toLowerCase().startsWith(prev.toLowerCase())) parts[parts.length - 1] = t;
+    else if (prev && prev.toLowerCase().startsWith(t.toLowerCase())) continue;
+    else parts.push(t);
+  }
+  return parts.join(" ");
+}
+
 function listen(key){
   if (active !== key) return;
   const s = sides[key];
   const r = new SR();
-  r.lang = s.lang; r.interimResults = true; r.continuous = false; r.maxAlternatives = 1;
-  let finalText = "", fatal = null;
+  // Keep the microphone open and end the sentence ourselves after the chosen pause,
+  // so a short breath doesn't cut the speaker off.
+  r.lang = s.lang; r.interimResults = true; r.continuous = true; r.maxAlternatives = 1;
+  let text = "", fatal = null, pauseTimer = null;
+  const maxTimer = setTimeout(() => { try { r.stop(); } catch {} }, 30000);   // very long monologue: translate in chunks
   rec = r;
   r.onresult = e => {
-    let interim = "";
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      const t = e.results[i][0].transcript;
-      if (e.results[i].isFinal) finalText += t; else interim += t;
-    }
-    const live = (finalText + " " + interim).trim();
-    if (live) { s.big.classList.remove("ph"); s.big.textContent = live; s.sub.textContent = ""; }
+    text = joinResults(e.results);
+    if (!text) return;
+    s.big.classList.remove("ph"); s.big.textContent = text; s.sub.textContent = "";
+    clearTimeout(pauseTimer);
+    pauseTimer = setTimeout(() => { try { r.stop(); } catch {} }, pauseMs);
   };
   r.onerror = e => {
     if (e.error === "no-speech" || e.error === "aborted") return;      // silence: just keep listening
@@ -319,9 +387,10 @@ function listen(key){
     fatal = MIC_MSG[e.error] || "Voice input stopped. Tap the mic to start again.";
   };
   r.onend = async () => {
+    clearTimeout(pauseTimer); clearTimeout(maxTimer);
     if (rec === r) rec = null;
     if (fatal) { s.sub.textContent = fatal; stopAll(); return; }
-    const t = finalText.trim();
+    const t = text.trim();
     if (t) {
       netErrors = 0;
       await handleUtterance(key, t);                 // translates, then waits until it has been read aloud
@@ -334,7 +403,7 @@ function listen(key){
     }
   };
   try { r.start(); }
-  catch { setTimeout(() => { if (active === key && !rec) listen(key); }, 600); }
+  catch { clearTimeout(maxTimer); setTimeout(() => { if (active === key && !rec) listen(key); }, 600); }
 }
 
 // Leaving the app releases the microphone.
@@ -368,8 +437,28 @@ async function translate(text, from, to){
 
 /* ---------- text-to-speech ---------- */
 let voices = [];
-function loadVoices(){ try { voices = speechSynthesis.getVoices(); } catch {} }
-if ("speechSynthesis" in window) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
+let voicePref = store.get("voices", {});          // { "ar-SA": "voice name", ... }
+let rate = store.get("rate", 0.95);
+const norm = l => (l || "").replace("_", "-").toLowerCase();
+
+// Voices for a language, best first: exact region match, then Google/natural/online voices.
+function voicesFor(lang){
+  const L = norm(lang), base = L.split("-")[0];
+  const score = v => {
+    const vl = norm(v.lang), n = v.name.toLowerCase();
+    let sc = vl === L ? 100 : 0;
+    if (/google|natural|neural|online|premium|enhanced|network/.test(n)) sc += 20;
+    if (v.localService === false) sc += 5;
+    return sc;
+  };
+  return voices.filter(v => norm(v.lang).split("-")[0] === base).sort((a, b) => score(b) - score(a));
+}
+function pickVoice(lang){
+  const list = voicesFor(lang);
+  return list.find(v => v.name === voicePref[lang]) || list[0] || null;
+}
+function loadVoices(){ try { voices = speechSynthesis.getVoices(); } catch {} fillVoiceMenus(); }
+
 // Resolves when the sentence has finished playing (or after a safety timeout).
 function say(text, lang){
   return new Promise(resolve => {
@@ -377,13 +466,12 @@ function say(text, lang){
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     u.lang = lang;
-    const base = lang.split("-")[0];
-    u.voice = voices.find(v => v.lang === lang) || voices.find(v => v.lang.replace("_","-").startsWith(base)) || null;
-    u.rate = 0.95;
+    u.voice = pickVoice(lang);
+    u.rate = rate;
     let done = false;
     const finish = () => { if (!done) { done = true; resolve(); } };
     u.onend = finish; u.onerror = finish;
-    setTimeout(finish, 2500 + text.length * 110);
+    setTimeout(finish, 2500 + text.length * 110 / rate);
     speechSynthesis.speak(u);
   });
 }
@@ -446,6 +534,45 @@ async function keepAwake(){
 }
 document.addEventListener("visibilitychange", keepAwake);
 document.addEventListener("pointerdown", keepAwake, { once: true });
+
+/* ---------- settings: pause length, voices, speed ---------- */
+function fillVoiceMenus(){
+  for (const [key, selId, lblId] of [["me","vMe","vMeLbl"], ["them","vThem","vThemLbl"]]) {
+    const lang = sides[key].lang, L = byCode(lang), sel = $(selId);
+    $(lblId).textContent = "Voice for " + L[0];
+    const list = voicesFor(lang), cur = pickVoice(lang);
+    sel.innerHTML = "";
+    if (!list.length) { sel.add(new Option("Phone's default voice", "")); sel.disabled = true; continue; }
+    sel.disabled = false;
+    for (const v of list) sel.add(new Option(v.name + (v.localService === false ? " · online" : ""), v.name));
+    if (cur) sel.value = cur.name;
+  }
+}
+function chooseVoice(key, name){ voicePref[sides[key].lang] = name; store.set("voices", voicePref); }
+$("vMe").onchange = e => chooseVoice("me", e.target.value);
+$("vThem").onchange = e => chooseVoice("them", e.target.value);
+const SAMPLE = { en:"Hello, this is how I will sound.", ar:"مرحباً، هكذا سيكون صوتي.", hi:"नमस्ते, मेरी आवाज़ ऐसी होगी।", ur:"السلام علیکم، میری آواز ایسی ہوگی۔",
+  kn:"ನಮಸ್ಕಾರ, ನನ್ನ ಧ್ವನಿ ಹೀಗಿರುತ್ತದೆ.", ml:"നമസ്കാരം, എന്റെ ശബ്ദം ഇങ്ങനെയായിരിക്കും.", ta:"வணக்கம், என் குரல் இப்படி இருக்கும்.", te:"నమస్తే, నా గొంతు ఇలా ఉంటుంది.",
+  bn:"নমস্কার, আমার কণ্ঠ এমন শোনাবে।", tl:"Kumusta, ganito ang tunog ko.", fr:"Bonjour, voici ma voix.", es:"Hola, así sonará mi voz.", de:"Hallo, so klinge ich.",
+  tr:"Merhaba, sesim böyle olacak.", ru:"Здравствуйте, так будет звучать мой голос.", id:"Halo, beginilah suara saya.", fa:"سلام، صدای من این‌طور است." };
+const sampleFor = lang => SAMPLE[byCode(lang)[2].split("-")[0]] || SAMPLE.en;
+$("tMe").onclick = () => say(sampleFor(sides.me.lang), sides.me.lang);
+$("tThem").onclick = () => say(sampleFor(sides.them.lang), sides.them.lang);
+
+function paintPause(){ $("pauseSeg").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", +b.dataset.ms === pauseMs ? "true" : "false")); }
+$("pauseSeg").onclick = e => { const b = e.target.closest("button"); if (!b) return; pauseMs = +b.dataset.ms; store.set("pause", pauseMs); paintPause(); };
+paintPause();
+
+$("rate").value = rate; $("rateVal").textContent = rate.toFixed(2) + "×";
+$("rate").oninput = e => { rate = +e.target.value; store.set("rate", rate); $("rateVal").textContent = rate.toFixed(2) + "×"; };
+
+$("setBtn").onclick = () => { stopAll(); fillVoiceMenus(); $("sheet").hidden = false; $("sheetDone").focus(); };
+$("sheetDone").onclick = () => { $("sheet").hidden = true; };
+$("sheet").onclick = e => { if (e.target === $("sheet")) $("sheet").hidden = true; };
+for (const id of ["meLang","themLang"]) $(id).addEventListener("change", fillVoiceMenus);
+$("swapBtn").addEventListener("click", fillVoiceMenus);
+
+if ("speechSynthesis" in window) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
 </script>
 </body>
 </html>
