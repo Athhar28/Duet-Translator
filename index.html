@@ -273,7 +273,7 @@ function paintSide(key){
 function setToggle(btn, on){ btn.setAttribute("aria-pressed", on ? "true" : "false"); }
 setToggle($("speakBtn"), speakOn);
 setToggle($("flipBtn"), flip); document.body.classList.toggle("flip", flip);
-$("speakBtn").onclick = () => { speakOn = !speakOn; store.set("speak", speakOn); setToggle($("speakBtn"), speakOn); if (!speakOn) speechSynthesis?.cancel(); };
+$("speakBtn").onclick = () => { speakOn = !speakOn; store.set("speak", speakOn); setToggle($("speakBtn"), speakOn); if (!speakOn) { speechSynthesis?.cancel(); speechQueue.length = 0; } };
 $("flipBtn").onclick = () => { flip = !flip; store.set("flip", flip); setToggle($("flipBtn"), flip); document.body.classList.toggle("flip", flip); };
 $("swapBtn").onclick = () => {
   const a = sides.me.lang; sides.me.lang = sides.them.lang; sides.them.lang = a;
@@ -299,17 +299,23 @@ $("saveBtn").onclick = () => {
 };
 
 /* ---------- speech recognition: hands-free ----------
-   Tap a mic once: it keeps listening and translating sentence after sentence
-   until that mic is tapped again. Listening pauses while a translation is read
-   aloud so the app doesn't hear its own voice. With "Take turns" on, the mic
-   passes to the other person after each sentence. */
+   Tap a mic once: it keeps listening until that mic is tapped again.
+   The microphone restarts immediately after every sentence, so nothing said
+   after a full stop is lost. Translations run in the background, and reading
+   aloud waits for a pause in speech (the mic pauses only while it speaks, so
+   it doesn't hear its own voice). With "Take turns" on, the mic passes to the
+   other person once the current speaker has been quiet for the chosen pause. */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 if (!SR) { $("noVoice").hidden = false; sides.me.mic.disabled = sides.them.mic.disabled = true; sides.me.mic.style.opacity = sides.them.mic.style.opacity = .4; }
-let rec = null;          // the recognizer currently running
-let active = null;       // "me" | "them" | null — whose mic is switched on
+let rec = null;            // the recognizer currently running
+let active = null;         // "me" | "them" | null — whose mic is switched on
 let netErrors = 0;
 let turns = store.get("turns", false);
 let pauseMs = store.get("pause", 1500);   // silence that ends a sentence
+let speaking = false;      // reading a translation aloud; mic is paused meanwhile
+let hearing = "";          // words heard in the current, unfinished sentence
+let lastHeardAt = 0;       // time of the last recognised word
+let turnDue = false;       // with Take turns: current speaker has said something
 
 setToggle($("turnsBtn"), turns);
 $("turnsBtn").onclick = () => { turns = !turns; store.set("turns", turns); setToggle($("turnsBtn"), turns); };
@@ -325,16 +331,16 @@ const MIC_MSG = {
 function paintMics(){
   for (const k of ["me","them"]) {
     const s = sides[k], on = active === k;
-    s.mic.classList.toggle("live", on);
+    s.mic.classList.toggle("live", on && !speaking);
     s.mic.innerHTML = on ? STOP : MIC;
     s.mic.setAttribute("aria-pressed", on ? "true" : "false");
-    s.lbl.textContent = on ? "Listening… tap to stop" : byCode(s.lang)[3];
+    s.lbl.textContent = on ? (speaking ? "Speaking… mic paused" : "Listening… tap to stop") : byCode(s.lang)[3];
   }
 }
 
 function stopAll(){
-  active = null;
-  if (rec) { const r = rec; rec = null; try { r.abort(); } catch {} }
+  active = null; turnDue = false; hearing = "";
+  if (rec) { const r = rec; rec = null; r._quiet = true; try { r.abort(); } catch {} }
   paintMics();
 }
 
@@ -342,10 +348,19 @@ function toggleListen(key){
   if (!SR) return;
   if (active === key) { stopAll(); return; }
   stopAll();
-  speechSynthesis?.cancel();
+  speechQueue.length = 0; speechSynthesis?.cancel(); speaking = false;
   active = key; netErrors = 0;
   paintMics();
   listen(key);
+}
+
+function switchTurn(){
+  if (!active) return;
+  turnDue = false;
+  active = other(active);
+  paintMics();
+  if (rec) { const r = rec; r._quiet = true; try { r.abort(); } catch {} rec = null; }
+  if (!speaking) listen(active);
 }
 
 // Joins recognition results into one sentence. Some Android versions repeat the
@@ -365,45 +380,66 @@ function joinResults(results){
 }
 
 function listen(key){
-  if (active !== key) return;
+  if (active !== key || speaking || rec) return;
   const s = sides[key];
   const r = new SR();
-  // Keep the microphone open and end the sentence ourselves after the chosen pause,
-  // so a short breath doesn't cut the speaker off.
   r.lang = s.lang; r.interimResults = true; r.continuous = true; r.maxAlternatives = 1;
-  let text = "", fatal = null, pauseTimer = null;
-  const maxTimer = setTimeout(() => { try { r.stop(); } catch {} }, 30000);   // very long monologue: translate in chunks
+  let text = "", fatal = null, pauseTimer = null, turnTimer = null;
+  const maxTimer = setTimeout(() => { try { r.stop(); } catch {} }, 30000);   // long monologue: translate in chunks
   rec = r;
+  // Take turns: if this speaker already spoke and stays quiet, hand the mic over.
+  if (turns && turnDue) turnTimer = setTimeout(() => { if (rec === r && !text) switchTurn(); }, pauseMs);
   r.onresult = e => {
     text = joinResults(e.results);
     if (!text) return;
+    clearTimeout(turnTimer);
+    hearing = text; lastHeardAt = Date.now();
     s.big.classList.remove("ph"); s.big.textContent = text; s.sub.textContent = "";
     clearTimeout(pauseTimer);
     pauseTimer = setTimeout(() => { try { r.stop(); } catch {} }, pauseMs);
   };
   r.onerror = e => {
-    if (e.error === "no-speech" || e.error === "aborted") return;      // silence: just keep listening
+    if (e.error === "no-speech" || e.error === "aborted") return;      // silence: keep listening
     if (e.error === "network") { netErrors++; if (netErrors < 3) return; }
     fatal = MIC_MSG[e.error] || "Voice input stopped. Tap the mic to start again.";
   };
-  r.onend = async () => {
-    clearTimeout(pauseTimer); clearTimeout(maxTimer);
+  r.onend = () => {
+    clearTimeout(pauseTimer); clearTimeout(maxTimer); clearTimeout(turnTimer);
     if (rec === r) rec = null;
+    hearing = "";
     if (fatal) { s.sub.textContent = fatal; stopAll(); return; }
     const t = text.trim();
-    if (t) {
-      netErrors = 0;
-      await handleUtterance(key, t);                 // translates, then waits until it has been read aloud
-      if (active !== key) return;                    // stopped meanwhile
-      const next = turns ? other(key) : key;
-      active = next; paintMics();
-      setTimeout(() => listen(next), 150);
-    } else {
-      if (active === key) setTimeout(() => listen(key), 250);   // heard nothing: listen again
-    }
+    if (t) { netErrors = 0; turnDue = true; handleUtterance(key, t); }   // translate in the background
+    if (r._quiet) return;                                                // stopped or handed over on purpose
+    if (active && !speaking) listen(active);                            // restart straight away
+    pumpSpeech();
   };
   try { r.start(); }
-  catch { clearTimeout(maxTimer); setTimeout(() => { if (active === key && !rec) listen(key); }, 600); }
+  catch { if (rec === r) rec = null; clearTimeout(maxTimer); clearTimeout(turnTimer);
+          setTimeout(() => { if (active === key && !rec && !speaking) listen(key); }, 400); }
+}
+
+/* Read-aloud queue: speaks finished translations in order, but only when nobody
+   is mid-sentence, pausing the mic while it talks. */
+const speechQueue = [];
+let pumpTimer = null;
+async function pumpSpeech(){
+  clearTimeout(pumpTimer);
+  if (speaking || !speechQueue.length) return;
+  if (active && (hearing || Date.now() - lastHeardAt < Math.min(pauseMs, 1200))) {
+    pumpTimer = setTimeout(pumpSpeech, 250);       // someone is still talking: wait
+    return;
+  }
+  speaking = true; paintMics();
+  if (rec) { const r = rec; r._quiet = true; try { r.abort(); } catch {} rec = null; }
+  while (speechQueue.length) {
+    const item = speechQueue.shift();
+    await say(item.text, item.lang);
+  }
+  speaking = false;
+  if (turns && turnDue && active) { switchTurn(); return; }   // translation heard: other person's turn
+  paintMics();
+  if (active && !rec) listen(active);
 }
 
 // Leaving the app releases the microphone.
@@ -477,7 +513,13 @@ function say(text, lang){
 }
 
 /* ---------- one turn ---------- */
-async function handleUtterance(key, text){
+let turnChain = Promise.resolve();
+function handleUtterance(key, text){
+  const job = turnChain.then(() => doTurn(key, text));
+  turnChain = job.catch(() => {});
+  return job;
+}
+async function doTurn(key, text){
   const s = sides[key], o = sides[other(key)];
   const fromL = byCode(s.lang), toL = byCode(o.lang);
   s.big.classList.remove("ph"); s.big.textContent = text; s.sub.textContent = "";
@@ -501,7 +543,7 @@ async function handleUtterance(key, text){
     o.last = { text: tr, lang: o.lang };
     s.last = { text, lang: s.lang };
     log.push({ who:key, time, from:fromL[0], to:toL[0], text, translation:tr });
-    if (speakOn) await say(tr, o.lang);
+    if (speakOn) { speechQueue.push({ text: tr, lang: o.lang }); pumpSpeech(); }
   } catch (err) {
     el.classList.add("err");
     el.querySelector(".t").textContent = err.message;

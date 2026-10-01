@@ -1,6 +1,6 @@
 // Keeps the app shell available offline so it opens instantly from the home screen.
 // Translation and voice recognition still need internet.
-const CACHE = "duet-v3";
+const CACHE = "duet-v4";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", e => {
