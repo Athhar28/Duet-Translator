@@ -146,6 +146,15 @@ input[type=range]{width:100%;accent-color:var(--accent)}
     </div>
 
     <div class="field">
+      <span>While reading aloud</span>
+      <div class="seg" id="ttsSeg">
+        <button type="button" data-mode="keep">Keep listening</button>
+        <button type="button" data-mode="pause">Pause mic</button>
+      </div>
+      <div class="hint">Keep listening catches everything you say. If it picks up the phone's own voice, use earphones or choose Pause mic.</div>
+    </div>
+
+    <div class="field">
       <span id="vMeLbl">Voice</span>
       <div class="vrow"><select id="vMe" aria-labelledby="vMeLbl"></select><button type="button" id="tMe">Test</button></div>
     </div>
@@ -302,8 +311,8 @@ $("saveBtn").onclick = () => {
    Tap a mic once: it keeps listening until that mic is tapped again.
    The microphone restarts immediately after every sentence, so nothing said
    after a full stop is lost. Translations run in the background, and reading
-   aloud waits for a pause in speech (the mic pauses only while it speaks, so
-   it doesn't hear its own voice). With "Take turns" on, the mic passes to the
+   aloud waits for a pause in speech. By default the mic keeps listening while
+   it reads aloud; Settings can pause the mic instead if it hears the speaker. With "Take turns" on, the mic passes to the
    other person once the current speaker has been quiet for the chosen pause. */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 if (!SR) { $("noVoice").hidden = false; sides.me.mic.disabled = sides.them.mic.disabled = true; sides.me.mic.style.opacity = sides.them.mic.style.opacity = .4; }
@@ -312,7 +321,8 @@ let active = null;         // "me" | "them" | null — whose mic is switched on
 let netErrors = 0;
 let turns = store.get("turns", false);
 let pauseMs = store.get("pause", 1500);   // silence that ends a sentence
-let speaking = false;      // reading a translation aloud; mic is paused meanwhile
+let speaking = false;      // reading a translation aloud
+let ttsMode = store.get("ttsMode", "keep");   // "keep": mic stays on while reading aloud; "pause": mic pauses
 let hearing = "";          // words heard in the current, unfinished sentence
 let lastHeardAt = 0;       // time of the last recognised word
 let turnDue = false;       // with Take turns: current speaker has said something
@@ -328,13 +338,14 @@ const MIC_MSG = {
   "audio-capture":"No microphone found."
 };
 
+const micPaused = () => speaking && ttsMode === "pause";
 function paintMics(){
   for (const k of ["me","them"]) {
     const s = sides[k], on = active === k;
-    s.mic.classList.toggle("live", on && !speaking);
+    s.mic.classList.toggle("live", on && !micPaused());
     s.mic.innerHTML = on ? STOP : MIC;
     s.mic.setAttribute("aria-pressed", on ? "true" : "false");
-    s.lbl.textContent = on ? (speaking ? "Speaking… mic paused" : "Listening… tap to stop") : byCode(s.lang)[3];
+    s.lbl.textContent = on ? (micPaused() ? "Speaking… mic paused" : "Listening… tap to stop") : byCode(s.lang)[3];
   }
 }
 
@@ -360,7 +371,7 @@ function switchTurn(){
   active = other(active);
   paintMics();
   if (rec) { const r = rec; r._quiet = true; try { r.abort(); } catch {} rec = null; }
-  if (!speaking) listen(active);
+  if (!micPaused()) listen(active);
 }
 
 // Joins recognition results into one sentence. Some Android versions repeat the
@@ -380,7 +391,7 @@ function joinResults(results){
 }
 
 function listen(key){
-  if (active !== key || speaking || rec) return;
+  if (active !== key || micPaused() || rec) return;
   const s = sides[key];
   const r = new SR();
   r.lang = s.lang; r.interimResults = true; r.continuous = true; r.maxAlternatives = 1;
@@ -388,7 +399,7 @@ function listen(key){
   const maxTimer = setTimeout(() => { try { r.stop(); } catch {} }, 30000);   // long monologue: translate in chunks
   rec = r;
   // Take turns: if this speaker already spoke and stays quiet, hand the mic over.
-  if (turns && turnDue) turnTimer = setTimeout(() => { if (rec === r && !text) switchTurn(); }, pauseMs);
+  if (turns && turnDue) turnTimer = setTimeout(() => { if (rec === r && !text && !speaking) switchTurn(); }, pauseMs);
   r.onresult = e => {
     text = joinResults(e.results);
     if (!text) return;
@@ -411,12 +422,12 @@ function listen(key){
     const t = text.trim();
     if (t) { netErrors = 0; turnDue = true; handleUtterance(key, t); }   // translate in the background
     if (r._quiet) return;                                                // stopped or handed over on purpose
-    if (active && !speaking) listen(active);                            // restart straight away
+    if (active && !micPaused()) listen(active);                         // restart straight away
     pumpSpeech();
   };
   try { r.start(); }
   catch { if (rec === r) rec = null; clearTimeout(maxTimer); clearTimeout(turnTimer);
-          setTimeout(() => { if (active === key && !rec && !speaking) listen(key); }, 400); }
+          setTimeout(() => { if (active === key && !rec && !micPaused()) listen(key); }, 400); }
 }
 
 /* Read-aloud queue: speaks finished translations in order, but only when nobody
@@ -431,7 +442,7 @@ async function pumpSpeech(){
     return;
   }
   speaking = true; paintMics();
-  if (rec) { const r = rec; r._quiet = true; try { r.abort(); } catch {} rec = null; }
+  if (ttsMode === "pause" && rec) { const r = rec; r._quiet = true; try { r.abort(); } catch {} rec = null; }
   while (speechQueue.length) {
     const item = speechQueue.shift();
     await say(item.text, item.lang);
@@ -604,6 +615,9 @@ $("tThem").onclick = () => say(sampleFor(sides.them.lang), sides.them.lang);
 function paintPause(){ $("pauseSeg").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", +b.dataset.ms === pauseMs ? "true" : "false")); }
 $("pauseSeg").onclick = e => { const b = e.target.closest("button"); if (!b) return; pauseMs = +b.dataset.ms; store.set("pause", pauseMs); paintPause(); };
 paintPause();
+function paintTts(){ $("ttsSeg").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", b.dataset.mode === ttsMode ? "true" : "false")); }
+$("ttsSeg").onclick = e => { const b = e.target.closest("button"); if (!b) return; ttsMode = b.dataset.mode; store.set("ttsMode", ttsMode); paintTts(); };
+paintTts();
 
 $("rate").value = rate; $("rateVal").textContent = rate.toFixed(2) + "×";
 $("rate").oninput = e => { rate = +e.target.value; store.set("rate", rate); $("rateVal").textContent = rate.toFixed(2) + "×"; };
