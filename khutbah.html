@@ -1,0 +1,459 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Khutbah Translator</title>
+<link rel="manifest" href="khutbah.webmanifest">
+<meta name="theme-color" content="#0b1a17">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Nastaliq+Urdu:wght@400;600&family=Noto+Naskh+Arabic:wght@400;600&family=Noto+Sans+Devanagari:wght@400;500&display=swap">
+<style>
+/* Layout: one column — live Arabic strip on top, running translation in the middle, controls docked at the bottom.
+   A deliberately dark, low-glare look for use inside the masjid. */
+:root{
+  --bg:#0b1a17; --panel:#11241f; --line:#1f3a33;
+  --fg:#e9efe9; --muted:#8fa79f; --ar:#b9cdc5;
+  --accent:#d9b56a; --accent-ink:#1b1408; --live:#4cc3a0; --stop:#e0675a;
+  --ui:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --urdu:"Noto Nastaliq Urdu","Jameel Noori Nastaleeq","Noto Naskh Arabic",serif;
+  --arabic:"Noto Naskh Arabic","Noto Sans Arabic",serif;
+  --deva:"Noto Sans Devanagari","IBM Plex Sans",sans-serif;
+  --fs:24px;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 var(--ui);display:flex;flex-direction:column;
+  padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px)}
+button,select,input{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+[hidden]{display:none!important}
+
+.top{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.brand{font:700 19px/1 var(--display);letter-spacing:-.01em;margin-right:auto;display:flex;align-items:center;gap:9px}
+.brand i{width:12px;height:12px;border-radius:50%;border:2px solid var(--accent);display:inline-block}
+.pick{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+select{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:7px 10px;max-width:100%}
+.icon{border:1px solid var(--line);background:transparent;border-radius:999px;padding:6px 12px;font-size:13px}
+
+.note{margin:10px 16px 0;padding:9px 12px;border-radius:10px;background:var(--panel);border:1px solid var(--line);font-size:13px;color:var(--muted);display:flex;gap:10px;align-items:flex-start}
+.note b{color:var(--fg)}
+.note button{margin-left:auto;border:0;background:transparent;color:var(--muted);font-size:18px;line-height:1;padding:0 2px}
+
+.live{margin:10px 16px 0;min-height:52px;padding:10px 12px;border-radius:10px;background:var(--panel);border:1px solid var(--line);
+  font:400 18px/1.7 var(--arabic);color:var(--ar);direction:rtl;text-align:right;overflow-wrap:anywhere}
+.live .lbl{display:block;direction:ltr;text-align:left;font:600 10.5px/1 var(--ui);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+
+.feed{flex:1;min-height:0;overflow-y:auto;padding:14px 16px 24px;display:flex;flex-direction:column;gap:16px;scroll-behavior:smooth}
+.empty{margin:auto;max-width:36ch;text-align:center;color:var(--muted)}
+.empty h2{font:700 20px/1.25 var(--display);color:var(--fg);margin:0 0 8px}
+.seg{display:flex;flex-direction:column;gap:4px;padding-left:12px;border-left:2px solid var(--line)}
+.seg.new{border-left-color:var(--accent)}
+.seg .ar{font:400 15px/1.8 var(--arabic);color:var(--muted);direction:rtl;text-align:right}
+.seg .tr{font-size:var(--fs);line-height:1.6;overflow-wrap:anywhere}
+.seg .tr.ur{font-family:var(--urdu);line-height:2.2;direction:rtl;text-align:right}
+.seg .tr.hi{font-family:var(--deva)}
+.seg .tr.wait{color:var(--muted)}
+.seg .tm{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+body.noar .seg .ar{display:none}
+
+.dock{border-top:1px solid var(--line);padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px));display:flex;align-items:center;gap:10px;background:var(--bg)}
+.go{flex:1;border:0;border-radius:999px;padding:14px 18px;font-weight:600;font-size:16px;background:var(--accent);color:var(--accent-ink);display:flex;align-items:center;justify-content:center;gap:10px}
+.go.on{background:var(--stop);color:#fff}
+.go .dot{width:10px;height:10px;border-radius:50%;background:currentColor}
+.go.on .dot{animation:blink 1.2s infinite}
+@keyframes blink{50%{opacity:.25}}
+.sq{width:46px;height:46px;flex:0 0 auto;border:1px solid var(--line);background:transparent;border-radius:14px;display:grid;place-items:center;font-weight:600}
+.sq[aria-pressed="false"]{opacity:.45}
+.sq svg{width:20px;height:20px}
+.status{padding:0 16px 6px;font-size:12px;color:var(--muted);min-height:18px}
+
+/* dim screen */
+.dim{position:fixed;inset:0;z-index:30;background:#000;display:flex;flex-direction:column;justify-content:flex-end;padding:24px 20px calc(30px + env(safe-area-inset-bottom,0px));gap:10px}
+.dim .tr{font-size:calc(var(--fs) * .9);line-height:1.7;color:#7d8f88;overflow-wrap:anywhere}
+.dim .tr.ur{font-family:var(--urdu);line-height:2.3;direction:rtl;text-align:right}
+.dim .tr.hi{font-family:var(--deva)}
+.dim small{color:#3d4a46;text-align:center}
+
+/* settings */
+.sheet{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center}
+.card{width:min(520px,100%);max-height:88%;overflow-y:auto;background:var(--panel);border-radius:18px 18px 0 0;padding:18px 16px calc(18px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:14px}
+.card h2{font:700 18px/1.2 var(--display);margin:0;display:flex;align-items:center}
+.card h2 button{margin-left:auto;border:0;border-radius:999px;padding:7px 16px;background:var(--accent);color:var(--accent-ink);font-weight:600}
+.field{display:flex;flex-direction:column;gap:6px}
+.field>span{font-size:11.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.field .hint{font-size:12.5px;color:var(--muted)}
+.row{display:flex;gap:8px;align-items:center}
+.row select{flex:1;min-width:0}
+.row button{border:1px solid var(--line);background:transparent;border-radius:999px;padding:7px 14px;font-weight:600}
+.segc{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.segc button{flex:1;border:0;background:transparent;padding:9px 6px}
+.segc button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);font-weight:600}
+input[type=range]{width:100%;accent-color:var(--accent)}
+@media (prefers-reduced-motion:reduce){.go.on .dot{animation:none}.feed{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="brand"><i aria-hidden="true"></i>Khutbah Translator</div>
+  <label class="pick">To
+    <select id="target" aria-label="Translate into"></select>
+  </label>
+  <button class="icon" id="setBtn" type="button">Settings</button>
+</div>
+
+<div class="note" id="earNote">
+  <span>🎧 <b>Use earphones.</b> The translation is spoken into your ears only. Without earphones the phone's speaker disturbs others and the mic hears its own voice.</span>
+  <button type="button" id="earClose" aria-label="Hide">×</button>
+</div>
+<div class="note" id="noVoice" hidden><span>Listening needs <b>Google Chrome</b> on Android. Please open this page in Chrome.</span></div>
+
+<div class="live" id="live"><span class="lbl">Imam · Arabic</span><span id="liveText">…</span></div>
+
+<div class="feed" id="feed" aria-live="polite">
+  <div class="empty" id="empty">
+    <h2>Ready for the khutbah</h2>
+    Put in your earphones, choose Urdu or Hindi above, and press <b>Start</b> when the imam begins. Keep the screen on; use <b>Dim</b> to darken it.
+  </div>
+</div>
+
+<div class="status" id="status"></div>
+<div class="dock">
+  <button class="go" id="goBtn" type="button"><span class="dot" aria-hidden="true"></span><span id="goLbl">Start</span></button>
+  <button class="sq" id="voiceBtn" type="button" aria-pressed="true" aria-label="Spoken translation" title="Spoken translation on/off">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 14v-4a2 2 0 0 1 2-2h1l4-4v16l-4-4H5a2 2 0 0 1-2-2z"/><path d="M16 8.5a5 5 0 0 1 0 7"/><path d="M19 5.5a9 9 0 0 1 0 13"/></svg>
+  </button>
+  <button class="sq" id="dimBtn" type="button" aria-label="Dim the screen" title="Dim the screen">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+  </button>
+</div>
+
+<div class="dim" id="dim" hidden>
+  <div class="tr" id="dimText" dir="auto"></div>
+  <small>Tap anywhere to brighten · still translating</small>
+</div>
+
+<div class="sheet" id="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="sTitle">
+  <div class="card">
+    <h2 id="sTitle">Settings <button type="button" id="sDone">Done</button></h2>
+
+    <div class="field">
+      <span>Imam speaks</span>
+      <select id="source" aria-label="Imam's language"></select>
+    </div>
+
+    <div class="field">
+      <span id="vLbl">Voice</span>
+      <div class="row"><select id="voice" aria-labelledby="vLbl"></select><button type="button" id="vTest">Test</button></div>
+      <div class="hint">Only voices installed on this phone are listed. Add more in Settings → Text-to-speech → Install voice data.</div>
+    </div>
+
+    <div class="field">
+      <span>Speaking speed <b id="rateVal"></b></span>
+      <input type="range" id="rate" min="0.8" max="1.5" step="0.05">
+      <div class="hint">Speeds up on its own for a moment if it falls behind the imam.</div>
+    </div>
+
+    <div class="field">
+      <span>Text size</span>
+      <div class="segc" id="sizeSeg">
+        <button type="button" data-fs="20">Small</button>
+        <button type="button" data-fs="24">Medium</button>
+        <button type="button" data-fs="30">Large</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <span>Show the Arabic</span>
+      <div class="segc" id="arSeg">
+        <button type="button" data-ar="1">Show</button>
+        <button type="button" data-ar="0">Hide</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <span>Transcript</span>
+      <div class="row"><button type="button" id="saveBtn">Save as text file</button><button type="button" id="clearBtn">Clear</button></div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ---------- settings & storage ---------- */
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d){ try { const v = localStorage.getItem("khutbah."+k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v){ try { localStorage.setItem("khutbah."+k, JSON.stringify(v)); } catch {} }
+};
+// [label, translate code, speech code, css class]
+const TARGETS = [
+  ["اردو — Urdu","ur","ur-PK","ur"],
+  ["हिन्दी — Hindi","hi","hi-IN","hi"],
+  ["English","en","en-IN",""],
+  ["ಕನ್ನಡ — Kannada","kn","kn-IN",""],
+  ["മലയാളം — Malayalam","ml","ml-IN",""],
+  ["தமிழ் — Tamil","ta","ta-IN",""],
+  ["తెలుగు — Telugu","te","te-IN",""],
+  ["বাংলা — Bengali","bn","bn-IN",""],
+];
+const SOURCES = [
+  ["Arabic — Saudi Arabia","ar-SA"],["Arabic — UAE","ar-AE"],["Arabic — Kuwait","ar-KW"],["Arabic — Qatar","ar-QA"],
+  ["Arabic — Egypt","ar-EG"],["Arabic — Jordan","ar-JO"],["English","en-IN"],["Urdu","ur-PK"],
+];
+let target = store.get("target", "ur");
+let source = store.get("source", "ar-SA");
+let voiceOn = store.get("voiceOn", true);
+let baseRate = store.get("rate", 1.05);
+let fs = store.get("fs", 24);
+let showAr = store.get("showAr", true);
+let voicePref = store.get("voice", {});
+const T = () => TARGETS.find(t => t[1] === target) || TARGETS[0];
+
+for (const t of TARGETS) $("target").add(new Option(t[0], t[1]));
+$("target").value = target;
+$("target").onchange = () => { target = $("target").value; store.set("target", target); fillVoices(); };
+for (const s of SOURCES) $("source").add(new Option(s[0], s[1]));
+$("source").value = source;
+$("source").onchange = () => { source = $("source").value; store.set("source", source); if (running) { restartRec(); } };
+
+function setPressed(groupId, attr, val){ $(groupId).querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset[attr] == val))); }
+function applyFs(){ document.documentElement.style.setProperty("--fs", fs + "px"); setPressed("sizeSeg","fs",fs); }
+$("sizeSeg").onclick = e => { const b = e.target.closest("button"); if (!b) return; fs = +b.dataset.fs; store.set("fs", fs); applyFs(); };
+applyFs();
+function applyAr(){ document.body.classList.toggle("noar", !showAr); setPressed("arSeg","ar", showAr ? 1 : 0); }
+$("arSeg").onclick = e => { const b = e.target.closest("button"); if (!b) return; showAr = b.dataset.ar === "1"; store.set("showAr", showAr); applyAr(); };
+applyAr();
+
+$("rate").value = baseRate; $("rateVal").textContent = baseRate.toFixed(2) + "×";
+$("rate").oninput = e => { baseRate = +e.target.value; store.set("rate", baseRate); $("rateVal").textContent = baseRate.toFixed(2) + "×"; };
+
+function paintVoiceBtn(){ $("voiceBtn").setAttribute("aria-pressed", String(voiceOn)); }
+$("voiceBtn").onclick = () => { voiceOn = !voiceOn; store.set("voiceOn", voiceOn); paintVoiceBtn(); if (!voiceOn) { ttsQueue.length = 0; speechSynthesis?.cancel(); } };
+paintVoiceBtn();
+
+if (store.get("earHidden", false)) $("earNote").hidden = true;
+$("earClose").onclick = () => { $("earNote").hidden = true; store.set("earHidden", true); };
+
+$("setBtn").onclick = () => { fillVoices(); $("sheet").hidden = false; };
+$("sDone").onclick = () => { $("sheet").hidden = true; };
+$("sheet").onclick = e => { if (e.target === $("sheet")) $("sheet").hidden = true; };
+
+/* ---------- voices ---------- */
+let voices = [];
+const norm = l => (l || "").replace("_","-").toLowerCase();
+function voicesFor(code){
+  const want = norm(T()[2]), base = code;
+  const score = v => (norm(v.lang) === want ? 100 : 0) + (/google|natural|neural|online|network|premium|enhanced/i.test(v.name) ? 20 : 0) + (v.localService === false ? 5 : 0);
+  return voices.filter(v => norm(v.lang).split("-")[0] === base).sort((a,b) => score(b) - score(a));
+}
+function pickVoice(){ const list = voicesFor(target); return list.find(v => v.name === voicePref[target]) || list[0] || null; }
+function fillVoices(){
+  const sel = $("voice"), list = voicesFor(target), cur = pickVoice();
+  $("vLbl").textContent = "Voice for " + T()[0];
+  sel.innerHTML = "";
+  if (!list.length) { sel.add(new Option("Phone's default voice", "")); sel.disabled = true; return; }
+  sel.disabled = false;
+  for (const v of list) sel.add(new Option(v.name + (v.localService === false ? " · online" : ""), v.name));
+  if (cur) sel.value = cur.name;
+}
+$("voice").onchange = e => { voicePref[target] = e.target.value; store.set("voice", voicePref); };
+const SAMPLE = { ur:"السلام علیکم، خطبے کا ترجمہ اس آواز میں سنائی دے گا۔", hi:"अस्सलामु अलैकुम, ख़ुत्बे का अनुवाद इसी आवाज़ में सुनाई देगा।",
+  en:"Assalamu alaikum. The khutbah translation will sound like this.", kn:"ಅಸ್ಸಲಾಮು ಅಲೈಕುಮ್, ಅನುವಾದ ಹೀಗೆ ಕೇಳಿಸುತ್ತದೆ.", ml:"അസ്സലാമു അലൈക്കും, പരിഭാഷ ഇങ്ങനെ കേൾക്കാം.",
+  ta:"அஸ்ஸலாமு அலைக்கும், மொழிபெயர்ப்பு இப்படி கேட்கும்.", te:"అస్సలాము అలైకుమ్, అనువాదం ఇలా వినిపిస్తుంది.", bn:"আসসালামু আলাইকুম, অনুবাদ এভাবে শোনা যাবে।" };
+$("vTest").onclick = () => say(SAMPLE[target] || SAMPLE.en, baseRate);
+function loadVoices(){ try { voices = speechSynthesis.getVoices(); } catch {} fillVoices(); }
+if ("speechSynthesis" in window) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
+
+function say(text, rate){
+  return new Promise(resolve => {
+    if (!("speechSynthesis" in window) || !text) return resolve();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = T()[2]; u.voice = pickVoice(); u.rate = rate;
+    let done = false; const fin = () => { if (!done) { done = true; resolve(); } };
+    u.onend = fin; u.onerror = fin;
+    setTimeout(fin, 3000 + text.length * 120 / rate);
+    speechSynthesis.speak(u);
+  });
+}
+
+/* Spoken translation queue: plays phrases in order while the mic keeps listening.
+   When it falls behind the imam it joins waiting phrases and speaks a little faster. */
+const ttsQueue = [];
+let ttsBusy = false;
+async function pumpTTS(){
+  if (ttsBusy) return;
+  ttsBusy = true;
+  while (ttsQueue.length && voiceOn) {
+    const behind = ttsQueue.length;
+    const text = behind >= 3 ? ttsQueue.splice(0).join(" ") : ttsQueue.shift();
+    const rate = Math.min(1.6, baseRate + (behind >= 2 ? 0.15 : 0) + (behind >= 3 ? 0.15 : 0));
+    await say(text, rate);
+  }
+  ttsBusy = false;
+}
+
+/* ---------- translation ---------- */
+async function translate(text, from, to){
+  try {
+    const u = "https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl=" + from + "&tl=" + to + "&q=" + encodeURIComponent(text);
+    const r = await fetch(u);
+    if (r.ok) { const j = await r.json(); const out = (j[0] || []).map(p => p[0]).join("").trim(); if (out) return out; }
+  } catch {}
+  try {
+    const u = "https://api.mymemory.translated.net/get?q=" + encodeURIComponent(text.slice(0, 480)) + "&langpair=" + from + "|" + to;
+    const r = await fetch(u);
+    if (r.ok) { const j = await r.json(); const out = j?.responseData?.translatedText; if (out && j.responseStatus == 200) return out; }
+  } catch {}
+  throw new Error("No internet");
+}
+
+/* ---------- transcript ---------- */
+const transcript = [];
+let chain = Promise.resolve();
+let lastSeg = null;
+function addSegment(arabic){
+  arabic = arabic.trim();
+  if (!arabic) return;
+  $("empty").hidden = true;
+  const el = document.createElement("div");
+  el.className = "seg new";
+  const time = new Date().toLocaleTimeString([], { hour:"2-digit", minute:"2-digit", second:"2-digit" });
+  el.innerHTML = '<div class="tr wait">…</div><div class="ar"></div><div class="tm"></div>';
+  el.querySelector(".ar").textContent = arabic;
+  el.querySelector(".tm").textContent = time;
+  if (lastSeg) lastSeg.classList.remove("new");
+  lastSeg = el;
+  const feed = $("feed");
+  const atBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 120;
+  feed.appendChild(el);
+  if (atBottom) feed.scrollTop = feed.scrollHeight;
+  const to = target, cls = T()[3], from = source.split("-")[0];
+  chain = chain.then(async () => {
+    const trEl = el.querySelector(".tr");
+    try {
+      const tr = await translate(arabic, from, to);
+      trEl.textContent = tr; trEl.className = "tr " + cls; trEl.dir = "auto";
+      transcript.push({ time, arabic, tr });
+      $("dimText").textContent = tr; $("dimText").className = "tr " + cls;
+      if (voiceOn && to === target) { ttsQueue.push(tr); pumpTTS(); }
+    } catch {
+      trEl.textContent = "Couldn't translate this part (check internet).";
+      transcript.push({ time, arabic, tr: "" });
+    }
+    if (feed.scrollHeight - feed.scrollTop - feed.clientHeight < 240) feed.scrollTop = feed.scrollHeight;
+  });
+}
+
+/* ---------- listening ---------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (!SR) { $("noVoice").hidden = false; $("goBtn").disabled = true; $("goBtn").style.opacity = .5; }
+let running = false, rec = null, pending = "", errCount = 0;
+const MAX_WORDS = 26;   // split very long phrases so the translation keeps up
+
+function setStatus(t){ $("status").textContent = t; }
+function paintGo(){
+  $("goBtn").classList.toggle("on", running);
+  $("goLbl").textContent = running ? "Stop" : "Start";
+}
+function showLive(t){ $("liveText").textContent = t || (running ? "…" : "…"); }
+
+function listen(){
+  if (!running || rec) return;
+  const r = new SR();
+  r.lang = source; r.continuous = true; r.interimResults = true; r.maxAlternatives = 1;
+  let done = 0, lastFinal = "", heard = false;
+  const startedAt = Date.now();
+  rec = r;
+  r.onresult = e => {
+    let interim = "";
+    for (let i = 0; i < e.results.length; i++) {
+      const res = e.results[i], t = (res[0]?.transcript || "").trim();
+      if (res.isFinal) {
+        if (i >= done) {
+          let seg = t;
+          if (lastFinal && seg.startsWith(lastFinal)) seg = seg.slice(lastFinal.length).trim();   // some phones repeat earlier words
+          lastFinal = t; done = i + 1;
+          if (seg) addSegment(seg);
+        }
+      } else interim += " " + t;
+    }
+    pending = interim.trim();
+    heard = true;
+    showLive(pending);
+    errCount = 0;
+    setStatus("Listening to the imam…");
+    if (pending.split(/\s+/).length > MAX_WORDS) { try { r.stop(); } catch {} }
+  };
+  r.onerror = e => {
+    if (e.error === "no-speech" || e.error === "aborted") return;
+    if (e.error === "not-allowed" || e.error === "service-not-allowed") { stop(); setStatus("Microphone blocked. Allow the microphone for this site in Chrome settings."); return; }
+    if (e.error === "language-not-supported") { stop(); setStatus("This browser can't listen in that language. Use Google Chrome."); return; }
+    errCount++;
+    setStatus(e.error === "network" ? "Connection problem — retrying…" : "Retrying…");
+  };
+  r.onend = () => {
+    if (rec === r) rec = null;
+    if (pending) { addSegment(pending); pending = ""; }
+    showLive("");
+    if (!running) return;
+    if (errCount >= 8) { stop(); setStatus("Stopped: no internet connection. Press Start to try again."); return; }
+    const quick = !heard && Date.now() - startedAt < 400;          // ended instantly: don't spin
+    setTimeout(listen, errCount || quick ? 800 : 30);   // otherwise restart straight away so nothing is missed
+  };
+  try { r.start(); } catch { rec = null; setTimeout(listen, 500); }
+}
+function restartRec(){ if (rec) { try { rec.stop(); } catch {} } }
+
+function start(){
+  if (!SR) return;
+  running = true; errCount = 0; paintGo(); setStatus("Listening to the imam…");
+  keepAwake();
+  listen();
+}
+function stop(){
+  running = false; paintGo(); setStatus("");
+  if (rec) { try { rec.stop(); } catch {} }
+  releaseAwake();
+}
+$("goBtn").onclick = () => running ? stop() : start();
+
+/* ---------- screen: keep on, dim ---------- */
+let wake = null;
+async function keepAwake(){ try { if ("wakeLock" in navigator && !wake) { wake = await navigator.wakeLock.request("screen"); wake.addEventListener("release", () => { wake = null; }); } } catch {} }
+function releaseAwake(){ try { wake?.release(); } catch {} wake = null; }
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && running) { keepAwake(); if (!rec) listen(); }
+  if (document.visibilityState === "hidden" && running) setStatus("Paused — keep this screen open (use Dim instead of locking the phone).");
+});
+$("dimBtn").onclick = () => { $("dim").hidden = false; };
+$("dim").onclick = () => { $("dim").hidden = true; };
+
+/* ---------- save / clear ---------- */
+$("saveBtn").onclick = () => {
+  if (!transcript.length) return;
+  const name = T()[0];
+  const body = transcript.map(s => `[${s.time}]\n${s.arabic}\n${s.tr}`).join("\n\n");
+  const blob = new Blob([`Khutbah — ${new Date().toLocaleDateString()} — translated to ${name}\n\n${body}\n`], { type:"text/plain;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "khutbah-" + new Date().toISOString().slice(0,10) + ".txt";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+};
+$("clearBtn").onclick = () => {
+  transcript.length = 0; lastSeg = null;
+  $("feed").querySelectorAll(".seg").forEach(n => n.remove());
+  $("empty").hidden = false; $("dimText").textContent = "";
+};
+
+if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+</script>
+</body>
+</html>
