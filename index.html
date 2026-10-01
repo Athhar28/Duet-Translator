@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Duet Translator</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#13324a">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+Arabic:wght@400;600&display=swap">
+<style>
+/* Layout: one screen split in two facing halves (theirs on top, flippable 180°), conversation log between them */
+:root{
+  --bg:#eef1f4;
+  --me:#ffffff;
+  --them:#13324a;
+  --them-fg:#eaf3fa;
+  --fg:#16212b;
+  --muted:#5d6b78;
+  --line:#d5dce3;
+  --accent:#0e8f7e;
+  --accent-ink:#ffffff;
+  --rec:#d6463a;
+  --bubble-me:#e2f2ef;
+  --bubble-them:#e5ebf2;
+  --display:"Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --body:"IBM Plex Sans", "Noto Sans Arabic", "Segoe UI", system-ui, sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0d151c;--me:#16212b;--them:#0a2436;--them-fg:#dcebf6;--fg:#e4ebf1;--muted:#93a3b1;--line:#253441;
+  --accent:#2fc2ad;--accent-ink:#04211d;--rec:#ff6a5c;--bubble-me:#123630;--bubble-them:#16293a;color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0d151c;--me:#16212b;--them:#0a2436;--them-fg:#dcebf6;--fg:#e4ebf1;--muted:#93a3b1;--line:#253441;
+  --accent:#2fc2ad;--accent-ink:#04211d;--rec:#ff6a5c;--bubble-me:#123630;--bubble-them:#16293a;color-scheme:dark}
+
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font:15px/1.45 var(--body);display:flex;flex-direction:column;
+  padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px)}
+button,select,input{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+[hidden]{display:none!important}
+
+/* top bar */
+.bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 16px;border-bottom:1px solid var(--line);background:var(--bg)}
+.brand{font:700 18px/1 var(--display);letter-spacing:-.01em;margin-right:auto;display:flex;align-items:center;gap:8px}
+.brand i{width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:8px 0 0 var(--them)}
+.chip{border:1px solid var(--line);background:transparent;border-radius:999px;padding:5px 12px;font-size:13px;display:inline-flex;gap:6px;align-items:center}
+.chip[aria-pressed="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+
+.banner{margin:8px 16px 0;padding:8px 12px;border-radius:8px;background:color-mix(in srgb,var(--rec) 14%,transparent);font-size:13px}
+
+/* halves */
+main{flex:1;display:flex;flex-direction:column;min-height:0}
+.half{flex:0 0 auto;padding:12px 16px 14px;display:flex;flex-direction:column;gap:10px;transition:transform .35s ease}
+.half.them{background:var(--them);color:var(--them-fg)}
+.half.me{background:var(--me);border-top:1px solid var(--line)}
+body.flip .half.them{transform:rotate(180deg)}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.who{font:600 11px/1 var(--body);letter-spacing:.12em;text-transform:uppercase;opacity:.75}
+select{border:1px solid currentColor;border-radius:8px;background:transparent;padding:6px 8px;max-width:100%}
+.them select{border-color:color-mix(in srgb,var(--them-fg) 40%,transparent)}
+.them select option{color:#16212b;background:#fff}
+.big{font:500 clamp(20px,4.6vw,30px)/1.3 var(--body);min-height:2.6em;max-height:7.5em;overflow-y:auto;overflow-wrap:anywhere}
+.big.ph{opacity:.5;font-size:18px}
+.sub{font-size:13px;opacity:.7;min-height:1.2em;overflow-wrap:anywhere}
+.ctrl{display:flex;gap:10px;align-items:center}
+.mic{flex:0 0 auto;width:62px;height:62px;border-radius:50%;border:0;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;position:relative}
+.them .mic{background:var(--them-fg);color:var(--them)}
+.mic svg{width:26px;height:26px}
+.mic.live{background:var(--rec);color:#fff}
+.mic.live::after{content:"";position:absolute;inset:-6px;border-radius:50%;border:2px solid var(--rec);animation:pulse 1.2s ease-out infinite}
+@keyframes pulse{from{opacity:.9;transform:scale(.92)}to{opacity:0;transform:scale(1.25)}}
+.miclabel{font-size:14px;opacity:.85}
+.type{flex:1;display:flex;gap:6px;min-width:0}
+.type input{flex:1;min-width:0;border:1px solid var(--line);border-radius:999px;padding:9px 14px;background:transparent}
+.them .type input{border-color:color-mix(in srgb,var(--them-fg) 35%,transparent)}
+.type button{border:0;border-radius:999px;padding:0 14px;background:transparent;font-weight:600}
+.spk{border:0;background:transparent;opacity:.7;padding:4px}
+.spk svg{width:20px;height:20px;display:block}
+
+/* log */
+.log{flex:1;min-height:90px;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:10px}
+.empty{margin:auto;text-align:center;color:var(--muted);max-width:34ch;font-size:14px}
+.msg{max-width:min(78%,560px);padding:9px 12px;border-radius:12px;display:flex;flex-direction:column;gap:3px}
+.msg.me{align-self:flex-end;background:var(--bubble-me);border-bottom-right-radius:3px}
+.msg.them{align-self:flex-start;background:var(--bubble-them);border-bottom-left-radius:3px}
+.msg .o{font-size:13px;color:var(--muted)}
+.msg .t{font-size:16px}
+.msg .m{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.msg.err .t{color:var(--rec)}
+
+@media (prefers-reduced-motion:reduce){.half{transition:none}.mic.live::after{animation:none}}
+@media (max-width:480px){.miclabel{display:none}.mic{width:56px;height:56px}}
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <div class="brand"><i aria-hidden="true"></i>Duet Translator</div>
+  <button class="chip" id="flipBtn" aria-pressed="false" title="Turn the top half around for the person sitting opposite you">Face-to-face</button>
+  <button class="chip" id="speakBtn" aria-pressed="true" title="Read each translation aloud">Speak aloud</button>
+  <button class="chip" id="swapBtn" title="Swap the two languages">Swap</button>
+  <button class="chip" id="saveBtn" title="Download the conversation as a text file">Save</button>
+  <button class="chip" id="clearBtn">Clear</button>
+  <button class="chip" id="installBtn" hidden>Install app</button>
+</div>
+<div class="banner" id="noVoice" hidden>Voice input needs Google Chrome or Microsoft Edge. Typing still works here.</div>
+
+<main>
+  <section class="half them" id="themHalf" aria-label="Other person">
+    <div class="row">
+      <span class="who">Them</span>
+      <select id="themLang" aria-label="Other person's language"></select>
+    </div>
+    <div class="big ph" id="themBig" dir="auto"></div>
+    <div class="sub" id="themSub" dir="auto"></div>
+    <div class="ctrl">
+      <button class="mic" id="themMic" aria-label="Other person: speak"></button>
+      <span class="miclabel" id="themMicLabel"></span>
+      <form class="type" id="themForm"><input id="themInput" dir="auto" autocomplete="off" aria-label="Other person: type a message"><button type="submit">↵</button></form>
+      <button class="spk" id="themSpk" aria-label="Replay"></button>
+    </div>
+  </section>
+
+  <div class="log" id="log" aria-live="polite">
+    <div class="empty" id="empty">Pick both languages, then each person taps their own microphone and speaks. Their words appear translated on the other side and are read aloud.</div>
+  </div>
+
+  <section class="half me" id="meHalf" aria-label="You">
+    <div class="row">
+      <span class="who">You</span>
+      <select id="meLang" aria-label="Your language"></select>
+    </div>
+    <div class="big ph" id="meBig" dir="auto"></div>
+    <div class="sub" id="meSub" dir="auto"></div>
+    <div class="ctrl">
+      <button class="mic" id="meMic" aria-label="You: speak"></button>
+      <span class="miclabel" id="meMicLabel"></span>
+      <form class="type" id="meForm"><input id="meInput" dir="auto" autocomplete="off" placeholder="or type…" aria-label="You: type a message"><button type="submit">↵</button></form>
+      <button class="spk" id="meSpk" aria-label="Replay"></button>
+    </div>
+  </section>
+</main>
+
+<script>
+/* ---------- languages: [label, speech code, translate code, "tap to speak"] ---------- */
+const LANGS = [
+  ["English (India)","en-IN","en","Tap to speak"],
+  ["English (US)","en-US","en","Tap to speak"],
+  ["English (UK)","en-GB","en","Tap to speak"],
+  ["العربية — Saudi","ar-SA","ar","اضغط وتحدث"],
+  ["العربية — Egypt","ar-EG","ar","اضغط وتحدث"],
+  ["العربية — UAE","ar-AE","ar","اضغط وتحدث"],
+  ["हिन्दी — Hindi","hi-IN","hi","बोलने के लिए दबाएँ"],
+  ["اردو — Urdu","ur-PK","ur","بولنے کے لیے دبائیں"],
+  ["ಕನ್ನಡ — Kannada","kn-IN","kn","ಮಾತನಾಡಲು ಒತ್ತಿ"],
+  ["മലയാളം — Malayalam","ml-IN","ml","സംസാരിക്കാൻ അമർത്തുക"],
+  ["தமிழ் — Tamil","ta-IN","ta","பேச அழுத்தவும்"],
+  ["తెలుగు — Telugu","te-IN","te","మాట్లాడటానికి నొక్కండి"],
+  ["বাংলা — Bengali","bn-BD","bn","কথা বলতে চাপুন"],
+  ["मराठी — Marathi","mr-IN","mr","बोलण्यासाठी दाबा"],
+  ["नेपाली — Nepali","ne-NP","ne","बोल्न थिच्नुहोस्"],
+  ["සිංහල — Sinhala","si-LK","si","කතා කිරීමට ඔබන්න"],
+  ["Filipino","fil-PH","tl","Pindutin para magsalita"],
+  ["Bahasa Indonesia","id-ID","id","Ketuk untuk bicara"],
+  ["فارسی — Persian","fa-IR","fa","برای صحبت ضربه بزنید"],
+  ["Türkçe — Turkish","tr-TR","tr","Konuşmak için dokunun"],
+  ["Français — French","fr-FR","fr","Touchez pour parler"],
+  ["Español — Spanish","es-ES","es","Toca para hablar"],
+  ["Deutsch — German","de-DE","de","Zum Sprechen tippen"],
+  ["Русский — Russian","ru-RU","ru","Нажмите, чтобы говорить"],
+  ["中文 — Chinese","zh-CN","zh-CN","点按说话"],
+];
+const byCode = c => LANGS.find(l => l[1] === c) || LANGS[0];
+
+const MIC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
+const STOP = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>';
+const SPK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>';
+
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d){ try { const v = localStorage.getItem("duet."+k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v){ try { localStorage.setItem("duet."+k, JSON.stringify(v)); } catch {} }
+};
+
+const sides = {
+  me:   { lang: store.get("me","en-IN"),  sel:$("meLang"),  big:$("meBig"),  sub:$("meSub"),  mic:$("meMic"),  lbl:$("meMicLabel"),  form:$("meForm"),  input:$("meInput"),  spk:$("meSpk"),  last:null },
+  them: { lang: store.get("them","ar-SA"),sel:$("themLang"),big:$("themBig"),sub:$("themSub"),mic:$("themMic"),lbl:$("themMicLabel"),form:$("themForm"),input:$("themInput"),spk:$("themSpk"),last:null },
+};
+const other = s => s === "me" ? "them" : "me";
+const log = [];
+let speakOn = store.get("speak", true);
+let flip = store.get("flip", false);
+
+/* ---------- UI setup ---------- */
+for (const key of ["me","them"]) {
+  const s = sides[key];
+  for (const [label, code] of LANGS) s.sel.add(new Option(label, code));
+  s.sel.value = s.lang;
+  s.sel.onchange = () => { s.lang = s.sel.value; store.set(key, s.lang); paintSide(key); };
+  s.mic.innerHTML = MIC;
+  s.spk.innerHTML = SPK;
+  s.mic.onclick = () => toggleListen(key);
+  s.spk.onclick = () => { if (s.last) say(s.last.text, s.last.lang); };
+  s.form.onsubmit = e => { e.preventDefault(); const t = s.input.value.trim(); if (t) { s.input.value = ""; handleUtterance(key, t); } };
+  paintSide(key);
+}
+function paintSide(key){
+  const s = sides[key], L = byCode(s.lang);
+  s.lbl.textContent = L[3];
+  s.lbl.dir = "auto";
+  if (key === "them") s.input.placeholder = "…";
+  if (!s.last) { s.big.textContent = L[3]; s.big.classList.add("ph"); }
+}
+
+function setToggle(btn, on){ btn.setAttribute("aria-pressed", on ? "true" : "false"); }
+setToggle($("speakBtn"), speakOn);
+setToggle($("flipBtn"), flip); document.body.classList.toggle("flip", flip);
+$("speakBtn").onclick = () => { speakOn = !speakOn; store.set("speak", speakOn); setToggle($("speakBtn"), speakOn); if (!speakOn) speechSynthesis?.cancel(); };
+$("flipBtn").onclick = () => { flip = !flip; store.set("flip", flip); setToggle($("flipBtn"), flip); document.body.classList.toggle("flip", flip); };
+$("swapBtn").onclick = () => {
+  const a = sides.me.lang; sides.me.lang = sides.them.lang; sides.them.lang = a;
+  sides.me.sel.value = sides.me.lang; sides.them.sel.value = sides.them.lang;
+  store.set("me", sides.me.lang); store.set("them", sides.them.lang);
+  paintSide("me"); paintSide("them");
+};
+$("clearBtn").onclick = () => {
+  log.length = 0;
+  $("log").querySelectorAll(".msg").forEach(n => n.remove());
+  $("empty").hidden = false;
+  for (const k of ["me","them"]) { const s = sides[k]; s.last = null; s.sub.textContent = ""; paintSide(k); }
+};
+$("saveBtn").onclick = () => {
+  if (!log.length) return;
+  const lines = log.map(m => `[${m.time}] ${m.who === "me" ? "You" : "Them"} (${m.from}): ${m.text}\n          → (${m.to}): ${m.translation}`);
+  const blob = new Blob(["Duet Translator — conversation\n" + new Date().toLocaleString() + "\n\n" + lines.join("\n\n") + "\n"], {type:"text/plain;charset=utf-8"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "conversation-" + new Date().toISOString().slice(0,16).replace(/[:T]/g,"-") + ".txt";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+};
+
+/* ---------- speech recognition ---------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (!SR) { $("noVoice").hidden = false; sides.me.mic.disabled = sides.them.mic.disabled = true; sides.me.mic.style.opacity = sides.them.mic.style.opacity = .4; }
+let rec = null, recSide = null;
+
+function toggleListen(key){
+  if (!SR) return;
+  if (rec) { const was = recSide; rec.stop(); if (was === key) return; }
+  speechSynthesis?.cancel();
+  const s = sides[key];
+  const r = new SR();
+  r.lang = s.lang; r.interimResults = true; r.continuous = false; r.maxAlternatives = 1;
+  let finalText = "";
+  rec = r; recSide = key;
+  s.mic.classList.add("live"); s.mic.innerHTML = STOP;
+  s.big.classList.remove("ph"); s.big.textContent = "…"; s.sub.textContent = "";
+  r.onresult = e => {
+    let interim = "";
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) finalText += t; else interim += t;
+    }
+    s.big.textContent = (finalText + " " + interim).trim() || "…";
+  };
+  r.onerror = e => {
+    const msg = {
+      "not-allowed":"Microphone blocked. Allow the microphone for Duet in Chrome site settings (or the app's permissions) and try again.",
+      "service-not-allowed":"Microphone blocked. Allow the microphone for Duet in Chrome site settings (or the app's permissions) and try again.",
+      "no-speech":"Didn't hear anything. Tap the mic and try again.",
+      "network":"Voice recognition needs an internet connection.",
+      "language-not-supported":"This browser can't recognise speech in that language. Type instead.",
+      "audio-capture":"No microphone found."
+    }[e.error];
+    if (msg && e.error !== "aborted") { s.sub.textContent = msg; }
+  };
+  r.onend = () => {
+    s.mic.classList.remove("live"); s.mic.innerHTML = MIC;
+    if (rec === r) { rec = null; recSide = null; }
+    const t = finalText.trim();
+    if (t) handleUtterance(key, t);
+    else if (!s.last) paintSide(key);
+  };
+  try { r.start(); } catch { s.mic.classList.remove("live"); s.mic.innerHTML = MIC; rec = null; }
+}
+
+/* ---------- translation ---------- */
+async function translate(text, from, to){
+  if (from === to) return text;
+  // 1) Google Translate public endpoint
+  try {
+    const u = "https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl=" + encodeURIComponent(from) + "&tl=" + encodeURIComponent(to) + "&q=" + encodeURIComponent(text);
+    const r = await fetch(u);
+    if (r.ok) {
+      const j = await r.json();
+      const out = (j[0] || []).map(p => p[0]).join("").trim();
+      if (out) return out;
+    }
+  } catch {}
+  // 2) MyMemory fallback
+  try {
+    const u = "https://api.mymemory.translated.net/get?q=" + encodeURIComponent(text.slice(0, 480)) + "&langpair=" + encodeURIComponent(from.split("-")[0]) + "|" + encodeURIComponent(to.split("-")[0]);
+    const r = await fetch(u);
+    if (r.ok) {
+      const j = await r.json();
+      const out = j?.responseData?.translatedText;
+      if (out && j.responseStatus == 200) return out;
+    }
+  } catch {}
+  throw new Error("Translation failed. Check the internet connection and try again.");
+}
+
+/* ---------- text-to-speech ---------- */
+let voices = [];
+function loadVoices(){ try { voices = speechSynthesis.getVoices(); } catch {} }
+if ("speechSynthesis" in window) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
+function say(text, lang){
+  if (!("speechSynthesis" in window) || !text) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = lang;
+  const base = lang.split("-")[0];
+  u.voice = voices.find(v => v.lang === lang) || voices.find(v => v.lang.replace("_","-").startsWith(base)) || null;
+  u.rate = 0.95;
+  speechSynthesis.speak(u);
+}
+
+/* ---------- one turn ---------- */
+async function handleUtterance(key, text){
+  const s = sides[key], o = sides[other(key)];
+  const fromL = byCode(s.lang), toL = byCode(o.lang);
+  s.big.classList.remove("ph"); s.big.textContent = text; s.sub.textContent = "";
+  o.big.classList.remove("ph"); o.big.textContent = "…"; o.sub.textContent = "";
+
+  $("empty").hidden = true;
+  const el = document.createElement("div");
+  el.className = "msg " + key;
+  const time = new Date().toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+  el.innerHTML = '<span class="o"></span><span class="t">…</span><span class="m"></span>';
+  el.querySelector(".o").textContent = text; el.querySelector(".o").dir = "auto";
+  el.querySelector(".m").textContent = (key === "me" ? "You" : "Them") + " · " + time;
+  $("log").appendChild(el); $("log").scrollTop = $("log").scrollHeight;
+
+  try {
+    const tr = await translate(text, fromL[2], toL[2]);
+    el.querySelector(".t").textContent = tr; el.querySelector(".t").dir = "auto";
+    o.big.textContent = tr;
+    o.sub.textContent = (key === "me" ? "You said" : "They said") + ": " + text;
+    s.sub.textContent = "→ " + tr;
+    o.last = { text: tr, lang: o.lang };
+    s.last = { text, lang: s.lang };
+    log.push({ who:key, time, from:fromL[0], to:toL[0], text, translation:tr });
+    if (speakOn) say(tr, o.lang);
+  } catch (err) {
+    el.classList.add("err");
+    el.querySelector(".t").textContent = err.message;
+    o.big.textContent = "—";
+    o.sub.textContent = err.message;
+  }
+  $("log").scrollTop = $("log").scrollHeight;
+}
+
+/* ---------- Android app: offline shell, install button, keep screen on ---------- */
+if ("serviceWorker" in navigator && location.protocol === "https:") {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
+let installEvt = null;
+window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; $("installBtn").hidden = false; });
+$("installBtn").onclick = async () => {
+  if (!installEvt) return;
+  installEvt.prompt();
+  try { await installEvt.userChoice; } catch {}
+  installEvt = null; $("installBtn").hidden = true;
+};
+window.addEventListener("appinstalled", () => { $("installBtn").hidden = true; });
+
+let wakeLock = null;
+async function keepAwake(){
+  try { if ("wakeLock" in navigator && document.visibilityState === "visible" && !wakeLock) {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => { wakeLock = null; });
+  } } catch {}
+}
+document.addEventListener("visibilitychange", keepAwake);
+document.addEventListener("pointerdown", keepAwake, { once: true });
+</script>
+</body>
+</html>
