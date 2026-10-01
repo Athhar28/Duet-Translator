@@ -162,6 +162,16 @@ input[type=range]{width:100%;accent-color:var(--accent)}
     </div>
 
     <div class="field">
+      <span>Translate in</span>
+      <div class="segc" id="chunkSeg">
+        <button type="button" data-chunk="short">Short phrases</button>
+        <button type="button" data-chunk="full">Full sentences</button>
+        <button type="button" data-chunk="long">Long passages</button>
+      </div>
+      <div class="hint">Full sentences gives the most natural translation. Short phrases is faster; Long passages suits an imam who speaks without pausing.</div>
+    </div>
+
+    <div class="field">
       <span>Text size</span>
       <div class="segc" id="sizeSeg">
         <button type="button" data-fs="20">Small</button>
@@ -314,26 +324,67 @@ async function translate(text, from, to){
   throw new Error("No internet");
 }
 
-/* ---------- transcript ---------- */
+/* ---------- transcript: build full sentences ----------
+   The phone recognises speech in small pieces. Pieces are collected into one
+   sentence until the imam pauses (or the sentence gets long), and only then is
+   the whole sentence translated and spoken. While he is still talking, the
+   current sentence is shown and re-translated live on screen. */
 const transcript = [];
 let chain = Promise.resolve();
 let lastSeg = null;
-function addSegment(arabic){
-  arabic = arabic.trim();
-  if (!arabic) return;
+// [pause that ends a sentence (ms), longest sentence (words)]
+const CHUNK = { short:[900, 16], full:[1500, 32], long:[2300, 50] };
+let chunkMode = store.get("chunk", "full");
+let buf = [], bufEl = null, bufVer = 0, flushTimer = null, liveTimer = null;
+const SENT_END = /[.!?؟۔!]\s*$/;
+const words = t => t.split(/\s+/).filter(Boolean).length;
+
+function newSegEl(){
   $("empty").hidden = true;
   const el = document.createElement("div");
   el.className = "seg new";
-  const time = new Date().toLocaleTimeString([], { hour:"2-digit", minute:"2-digit", second:"2-digit" });
   el.innerHTML = '<div class="tr wait">…</div><div class="ar"></div><div class="tm"></div>';
-  el.querySelector(".ar").textContent = arabic;
-  el.querySelector(".tm").textContent = time;
+  el.querySelector(".tm").textContent = new Date().toLocaleTimeString([], { hour:"2-digit", minute:"2-digit", second:"2-digit" });
   if (lastSeg) lastSeg.classList.remove("new");
   lastSeg = el;
   const feed = $("feed");
-  const atBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 120;
+  const atBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 160;
   feed.appendChild(el);
   if (atBottom) feed.scrollTop = feed.scrollHeight;
+  return el;
+}
+
+// Called with each recognised piece of Arabic.
+function addSegment(piece){
+  piece = piece.trim();
+  if (!piece) return;
+  buf.push(piece);
+  if (!bufEl) bufEl = newSegEl();
+  const text = buf.join(" ");
+  bufEl.querySelector(".ar").textContent = text;
+  const [pause, maxW] = CHUNK[chunkMode] || CHUNK.full;
+  clearTimeout(flushTimer);
+  const n = words(text);
+  if (n >= maxW || (SENT_END.test(piece) && n >= 6)) { flush(); return; }
+  flushTimer = setTimeout(flush, pause);
+  // live preview of the sentence so far (not spoken)
+  clearTimeout(liveTimer);
+  const el = bufEl, ver = ++bufVer, to = target, from = source.split("-")[0];
+  liveTimer = setTimeout(async () => {
+    try {
+      const tr = await translate(text, from, to);
+      if (el === bufEl && ver === bufVer) { const t = el.querySelector(".tr"); t.textContent = tr; t.className = "tr wait " + T()[3]; t.dir = "auto"; }
+    } catch {}
+  }, 350);
+}
+
+// Imam paused: translate the whole sentence once, show it and speak it.
+function flush(){
+  clearTimeout(flushTimer); clearTimeout(liveTimer);
+  if (!buf.length || !bufEl) return;
+  const arabic = buf.join(" "), el = bufEl;
+  buf = []; bufEl = null; bufVer++;
+  const time = el.querySelector(".tm").textContent;
   const to = target, cls = T()[3], from = source.split("-")[0];
   chain = chain.then(async () => {
     const trEl = el.querySelector(".tr");
@@ -347,9 +398,14 @@ function addSegment(arabic){
       trEl.textContent = "Couldn't translate this part (check internet).";
       transcript.push({ time, arabic, tr: "" });
     }
-    if (feed.scrollHeight - feed.scrollTop - feed.clientHeight < 240) feed.scrollTop = feed.scrollHeight;
+    const feed = $("feed");
+    if (feed.scrollHeight - feed.scrollTop - feed.clientHeight < 260) feed.scrollTop = feed.scrollHeight;
   });
 }
+
+function paintChunk(){ setPressed("chunkSeg", "chunk", chunkMode); }
+$("chunkSeg").onclick = e => { const b = e.target.closest("button"); if (!b) return; chunkMode = b.dataset.chunk; store.set("chunk", chunkMode); paintChunk(); };
+paintChunk();
 
 /* ---------- listening ---------- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -419,6 +475,7 @@ function start(){
 }
 function stop(){
   running = false; paintGo(); setStatus("");
+  setTimeout(flush, 400);
   if (rec) { try { rec.stop(); } catch {} }
   releaseAwake();
 }
@@ -448,7 +505,7 @@ $("saveBtn").onclick = () => {
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 };
 $("clearBtn").onclick = () => {
-  transcript.length = 0; lastSeg = null;
+  transcript.length = 0; lastSeg = null; buf = []; bufEl = null; clearTimeout(flushTimer); clearTimeout(liveTimer);
   $("feed").querySelectorAll(".seg").forEach(n => n.remove());
   $("empty").hidden = false; $("dimText").textContent = "";
 };
