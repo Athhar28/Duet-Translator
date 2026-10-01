@@ -7,8 +7,8 @@
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#13324a">
 <meta name="mobile-web-app-capable" content="yes">
-<link rel="icon" href="icons/icon-192.png">
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+Arabic:wght@400;600&display=swap">
 <style>
@@ -105,6 +105,7 @@ select{border:1px solid currentColor;border-radius:8px;background:transparent;pa
   <div class="brand"><i aria-hidden="true"></i>Duet Translator</div>
   <button class="chip" id="flipBtn" aria-pressed="false" title="Turn the top half around for the person sitting opposite you">Face-to-face</button>
   <button class="chip" id="speakBtn" aria-pressed="true" title="Read each translation aloud">Speak aloud</button>
+  <button class="chip" id="turnsBtn" aria-pressed="false" title="After each sentence, the microphone passes to the other person">Take turns</button>
   <button class="chip" id="swapBtn" title="Swap the two languages">Swap</button>
   <button class="chip" id="saveBtn" title="Download the conversation as a text file">Save</button>
   <button class="chip" id="clearBtn">Clear</button>
@@ -129,7 +130,7 @@ select{border:1px solid currentColor;border-radius:8px;background:transparent;pa
   </section>
 
   <div class="log" id="log" aria-live="polite">
-    <div class="empty" id="empty">Pick both languages, then each person taps their own microphone and speaks. Their words appear translated on the other side and are read aloud.</div>
+    <div class="empty" id="empty">Pick both languages. Tap a mic once and keep talking: every sentence is translated and read aloud until you tap the mic again. Turn on <b>Take turns</b> to pass the mic to the other person after each sentence.</div>
   </div>
 
   <section class="half me" id="meHalf" aria-label="You">
@@ -247,50 +248,97 @@ $("saveBtn").onclick = () => {
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 };
 
-/* ---------- speech recognition ---------- */
+/* ---------- speech recognition: hands-free ----------
+   Tap a mic once: it keeps listening and translating sentence after sentence
+   until that mic is tapped again. Listening pauses while a translation is read
+   aloud so the app doesn't hear its own voice. With "Take turns" on, the mic
+   passes to the other person after each sentence. */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 if (!SR) { $("noVoice").hidden = false; sides.me.mic.disabled = sides.them.mic.disabled = true; sides.me.mic.style.opacity = sides.them.mic.style.opacity = .4; }
-let rec = null, recSide = null;
+let rec = null;          // the recognizer currently running
+let active = null;       // "me" | "them" | null — whose mic is switched on
+let netErrors = 0;
+let turns = store.get("turns", false);
+
+setToggle($("turnsBtn"), turns);
+$("turnsBtn").onclick = () => { turns = !turns; store.set("turns", turns); setToggle($("turnsBtn"), turns); };
+
+const MIC_MSG = {
+  "not-allowed":"Microphone blocked. Allow the microphone for Duet in the browser's site settings and try again.",
+  "service-not-allowed":"Microphone blocked. Allow the microphone for Duet in the browser's site settings and try again.",
+  "network":"Voice recognition needs an internet connection.",
+  "language-not-supported":"This browser can't recognise speech in that language. Type instead, or try Google Chrome.",
+  "audio-capture":"No microphone found."
+};
+
+function paintMics(){
+  for (const k of ["me","them"]) {
+    const s = sides[k], on = active === k;
+    s.mic.classList.toggle("live", on);
+    s.mic.innerHTML = on ? STOP : MIC;
+    s.mic.setAttribute("aria-pressed", on ? "true" : "false");
+    s.lbl.textContent = on ? "Listening… tap to stop" : byCode(s.lang)[3];
+  }
+}
+
+function stopAll(){
+  active = null;
+  if (rec) { const r = rec; rec = null; try { r.abort(); } catch {} }
+  paintMics();
+}
 
 function toggleListen(key){
   if (!SR) return;
-  if (rec) { const was = recSide; rec.stop(); if (was === key) return; }
+  if (active === key) { stopAll(); return; }
+  stopAll();
   speechSynthesis?.cancel();
+  active = key; netErrors = 0;
+  paintMics();
+  listen(key);
+}
+
+function listen(key){
+  if (active !== key) return;
   const s = sides[key];
   const r = new SR();
   r.lang = s.lang; r.interimResults = true; r.continuous = false; r.maxAlternatives = 1;
-  let finalText = "";
-  rec = r; recSide = key;
-  s.mic.classList.add("live"); s.mic.innerHTML = STOP;
-  s.big.classList.remove("ph"); s.big.textContent = "…"; s.sub.textContent = "";
+  let finalText = "", fatal = null;
+  rec = r;
   r.onresult = e => {
     let interim = "";
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const t = e.results[i][0].transcript;
       if (e.results[i].isFinal) finalText += t; else interim += t;
     }
-    s.big.textContent = (finalText + " " + interim).trim() || "…";
+    const live = (finalText + " " + interim).trim();
+    if (live) { s.big.classList.remove("ph"); s.big.textContent = live; s.sub.textContent = ""; }
   };
   r.onerror = e => {
-    const msg = {
-      "not-allowed":"Microphone blocked. Allow the microphone for Duet in Chrome site settings (or the app's permissions) and try again.",
-      "service-not-allowed":"Microphone blocked. Allow the microphone for Duet in Chrome site settings (or the app's permissions) and try again.",
-      "no-speech":"Didn't hear anything. Tap the mic and try again.",
-      "network":"Voice recognition needs an internet connection.",
-      "language-not-supported":"This browser can't recognise speech in that language. Type instead.",
-      "audio-capture":"No microphone found."
-    }[e.error];
-    if (msg && e.error !== "aborted") { s.sub.textContent = msg; }
+    if (e.error === "no-speech" || e.error === "aborted") return;      // silence: just keep listening
+    if (e.error === "network") { netErrors++; if (netErrors < 3) return; }
+    fatal = MIC_MSG[e.error] || "Voice input stopped. Tap the mic to start again.";
   };
-  r.onend = () => {
-    s.mic.classList.remove("live"); s.mic.innerHTML = MIC;
-    if (rec === r) { rec = null; recSide = null; }
+  r.onend = async () => {
+    if (rec === r) rec = null;
+    if (fatal) { s.sub.textContent = fatal; stopAll(); return; }
     const t = finalText.trim();
-    if (t) handleUtterance(key, t);
-    else if (!s.last) paintSide(key);
+    if (t) {
+      netErrors = 0;
+      await handleUtterance(key, t);                 // translates, then waits until it has been read aloud
+      if (active !== key) return;                    // stopped meanwhile
+      const next = turns ? other(key) : key;
+      active = next; paintMics();
+      setTimeout(() => listen(next), 150);
+    } else {
+      if (active === key) setTimeout(() => listen(key), 250);   // heard nothing: listen again
+    }
   };
-  try { r.start(); } catch { s.mic.classList.remove("live"); s.mic.innerHTML = MIC; rec = null; }
+  try { r.start(); }
+  catch { setTimeout(() => { if (active === key && !rec) listen(key); }, 600); }
 }
+
+// Leaving the app releases the microphone.
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") stopAll(); });
 
 /* ---------- translation ---------- */
 async function translate(text, from, to){
@@ -322,15 +370,22 @@ async function translate(text, from, to){
 let voices = [];
 function loadVoices(){ try { voices = speechSynthesis.getVoices(); } catch {} }
 if ("speechSynthesis" in window) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
+// Resolves when the sentence has finished playing (or after a safety timeout).
 function say(text, lang){
-  if (!("speechSynthesis" in window) || !text) return;
-  speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = lang;
-  const base = lang.split("-")[0];
-  u.voice = voices.find(v => v.lang === lang) || voices.find(v => v.lang.replace("_","-").startsWith(base)) || null;
-  u.rate = 0.95;
-  speechSynthesis.speak(u);
+  return new Promise(resolve => {
+    if (!("speechSynthesis" in window) || !text) return resolve();
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = lang;
+    const base = lang.split("-")[0];
+    u.voice = voices.find(v => v.lang === lang) || voices.find(v => v.lang.replace("_","-").startsWith(base)) || null;
+    u.rate = 0.95;
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    u.onend = finish; u.onerror = finish;
+    setTimeout(finish, 2500 + text.length * 110);
+    speechSynthesis.speak(u);
+  });
 }
 
 /* ---------- one turn ---------- */
@@ -358,7 +413,7 @@ async function handleUtterance(key, text){
     o.last = { text: tr, lang: o.lang };
     s.last = { text, lang: s.lang };
     log.push({ who:key, time, from:fromL[0], to:toL[0], text, translation:tr });
-    if (speakOn) say(tr, o.lang);
+    if (speakOn) await say(tr, o.lang);
   } catch (err) {
     el.classList.add("err");
     el.querySelector(".t").textContent = err.message;
