@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Duet Translator — microphone</title>
+<style>
+:root{--bg:#eef1f4;--fg:#16212b;--muted:#5d6b78;--accent:#0e8f7e;--ink:#fff;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#0d151c;--fg:#e4ebf1;--muted:#93a3b1;--accent:#2fc2ad;--ink:#04211d;color-scheme:dark}}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--fg);font:16px/1.5 "Segoe UI",system-ui,sans-serif;padding:24px;box-sizing:border-box}
+main{max-width:440px;text-align:center}
+h1{font-size:22px;margin:0 0 8px}
+p{color:var(--muted);margin:0 0 20px}
+button{font:inherit;font-weight:600;border:0;border-radius:999px;padding:12px 24px;background:var(--accent);color:var(--ink);cursor:pointer}
+#status{margin-top:18px;font-weight:600}
+</style>
+</head>
+<body>
+<main>
+  <h1>Allow the microphone once</h1>
+  <p>Chrome only asks for microphone access in a normal tab, not in the side panel. Allow it here and the side panel can listen from now on.</p>
+  <button id="allow">Allow microphone</button>
+  <div id="status" role="status"></div>
+</main>
+<script src="permission.js"></script>
+</body>
+</html>

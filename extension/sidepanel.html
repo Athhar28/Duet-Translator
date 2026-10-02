@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Duet Translator</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+Arabic:wght@400;600&display=swap">
+<link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="brand"><i aria-hidden="true"></i>Duet</div>
+  <button class="chip" id="speakBtn" aria-pressed="true" title="Read each translation aloud">Speak aloud</button>
+  <button class="chip" id="capBtn" aria-pressed="false" title="Translate the live captions of Google Meet, Teams or Zoom in this browser">Meeting captions</button>
+  <button class="chip" id="swapBtn" title="Swap the two languages">Swap</button>
+  <button class="chip" id="saveBtn" title="Download the conversation as a text file">Save</button>
+  <button class="chip" id="clearBtn">Clear</button>
+</header>
+<div class="banner" id="banner" hidden></div>
+<div class="capnote" id="capNote" hidden></div>
+
+<main>
+  <section class="half them" aria-label="Other person">
+    <div class="row">
+      <span class="who">Them</span>
+      <select id="themLang" aria-label="Other person's language"></select>
+    </div>
+    <div class="big ph" id="themBig" dir="auto"></div>
+    <div class="sub" id="themSub" dir="auto"></div>
+    <div class="ctrl">
+      <button class="mic" id="themMic" aria-label="Other person: speak"></button>
+      <form class="type" id="themForm"><input id="themInput" dir="auto" autocomplete="off" placeholder="…" aria-label="Other person: type"><button type="submit" aria-label="Translate">↵</button></form>
+      <button class="spk" id="themSpk" aria-label="Replay"></button>
+    </div>
+  </section>
+
+  <div class="log" id="log" aria-live="polite">
+    <div class="empty" id="empty">Each person taps their own mic and speaks. In an online meeting, turn on <b>Meeting captions</b> to translate what the other person says automatically.</div>
+  </div>
+
+  <section class="half me" aria-label="You">
+    <div class="row">
+      <span class="who">You</span>
+      <select id="meLang" aria-label="Your language"></select>
+    </div>
+    <div class="big ph" id="meBig" dir="auto"></div>
+    <div class="sub" id="meSub" dir="auto"></div>
+    <div class="ctrl">
+      <button class="mic" id="meMic" aria-label="You: speak"></button>
+      <form class="type" id="meForm"><input id="meInput" dir="auto" autocomplete="off" placeholder="or type…" aria-label="You: type"><button type="submit" aria-label="Translate">↵</button></form>
+      <button class="spk" id="meSpk" aria-label="Replay"></button>
+    </div>
+  </section>
+</main>
+
+<script src="sidepanel.js"></script>
+</body>
+</html>
